@@ -36,6 +36,18 @@ SKILL = os.path.dirname(ESTILOS)
 REC = os.path.join(SKILL, 'recursos')
 SFX = os.path.join(REC, 'sfx')
 W, H, FPS = 1080, 1920, 30
+
+
+def dur_cut(P):
+    """Duración real de cut.mp4 (cuadros / fps): versiones viejas de preparar.py dejaban en cutmap.json una "dur" más corta."""
+    try:
+        r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_packets', '-show_entries',
+                            'stream=nb_read_packets,r_frame_rate', '-of', 'json', os.path.join(P, 'cut.mp4')],
+                           capture_output=True, text=True)
+        st = json.loads(r.stdout)['streams'][0]; a, b = st['r_frame_rate'].split('/')
+        return int(st['nb_read_packets']) * int(b) / int(a)
+    except Exception:
+        return 0.0
 TINTA = '#172033'
 ROJO = '#E5322D'
 
@@ -112,7 +124,7 @@ class Reel:
                 pre = re.match(r'^[¿¡"“]*', w['text']).group(0); pos = re.search(r'[.,;:?!"”]*$', w['text']).group(0)
                 w['text'] = pre + corr[k] + pos
         cm = json.load(open(os.path.join(P, 'cutmap.json')))
-        self.DUR = round((dur or cm['dur']) * FPS) / FPS
+        self.DUR = round((dur or max(cm['dur'], dur_cut(P))) * FPS) / FPS     # nunca más corto que cut.mp4
         self.rojas = {norm(r) for r in rojas}
         self.musica = buscar_musica(musica, P); self.vol, self.ini_mus = volumen_musica, inicio_musica
         self.referencia = referencia                # video de comparación (opcional): lado a lado y fotos pareadas

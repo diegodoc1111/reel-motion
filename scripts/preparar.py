@@ -200,13 +200,19 @@ def main():
     print(f'duración {DUR:.2f}s -> {newdur:.2f}s | {len(keep)} tramos | {len(merged)} cortes' + (' (incluye _work/cortes.json)' if os.path.exists(extra) else ''))
 
     # ---------- 3) cortar a cuadro exacto ----------
+    # El video pasa primero a FPS (el filtro fps deja la base de tiempo en 1/FPS: pts = número de cuadro) y cada tramo se
+    # corta por número de cuadro (start_pts/end_pts): así trae exactamente (t-s)*FPS cuadros, venga el original a 24, 30,
+    # 50 o 60 fps. Antes se cortaba en segundos: el redondeo metía un cuadro de más en algunos tramos, concat estiraba el
+    # audio con silencio y cut.mp4 salía hasta 0,4 s más largo que "dur" (el reel se comía la última palabra).
     fc = []; ins = ''; pre = (','.join(vf) + ',') if vf else ''
+    n_t = len(keep)
+    fc.append(f'[0:v]fps={FPS}' + (f',split={n_t}' if n_t > 1 else '') + ''.join(f'[s{k}]' for k in range(n_t)))
     for k, (s, t) in enumerate(keep):
         d_ = t - s
-        fc.append(f'[0:v]trim=start={s:.4f}:end={t:.4f},setpts=PTS-STARTPTS[v{k}]')
-        fc.append(f'[0:a]atrim=start={s:.4f}:end={t:.4f},asetpts=PTS-STARTPTS,afade=t=in:d=0.02,afade=t=out:st={max(0, d_ - 0.03):.4f}:d=0.03[a{k}]')
+        fc.append(f'[s{k}]trim=start_pts={round(s * FPS)}:end_pts={round(t * FPS)},setpts=PTS-STARTPTS[v{k}]')
+        fc.append(f'[0:a]atrim=start={s:.6f}:end={t:.6f},asetpts=PTS-STARTPTS,afade=t=in:d=0.02,afade=t=out:st={max(0, d_ - 0.03):.4f}:d=0.03[a{k}]')
         ins += f'[v{k}][a{k}]'
-    fc.append(f'{ins}concat=n={len(keep)}:v=1:a=1[vc][ao]')
+    fc.append(f'{ins}concat=n={n_t}:v=1:a=1[vc][ao]')
     fc.append(f'[vc]{pre}fps={FPS},format=yuv420p[vo]')
     script = os.path.join(WK, 'fc_cut.txt'); open(script, 'w').write(';\n'.join(fc))
     print('cortando…', flush=True)
@@ -219,6 +225,12 @@ def main():
     run(['ffmpeg', '-y', '-v', 'error', '-i', mov, '-vn', '-ac', '1', '-ar', '48000', os.path.join(WK, 'voice_raw.wav')])
     c16 = os.path.join(WK, 'cut16.wav'); run(['ffmpeg', '-y', '-v', 'error', '-i', mov, '-vn', '-ac', '1', '-ar', '16000', c16])
     os.remove(mov)
+    # "dur" = lo que de verdad mide cut.mp4 (cuadros / FPS), no la suma teórica de los tramos
+    nfr = int(run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_packets', '-show_entries', 'stream=nb_read_packets',
+                   '-of', 'csv=p=0', os.path.join(P, 'cut.mp4')]).stdout.strip().split(',')[0])
+    if abs(nfr / FPS - newdur) > 1.5 / FPS:
+        print(f'  (aviso) cut.mp4 mide {nfr / FPS:.3f}s y los tramos suman {newdur:.3f}s: uso la medida real')
+    newdur = nfr / FPS
     cm = os.path.join(P, 'cutmap.json'); viejo = None
     if os.path.exists(cm):
         try: viejo = [[round(v, 3) for v in k] for k in json.load(open(cm))['keep']]

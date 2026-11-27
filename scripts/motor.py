@@ -643,6 +643,18 @@ def capturas_reales(TH):
 # =====================================================================================================
 #  INICIAR / CERRAR
 # =====================================================================================================
+def _dur_cut(P):
+    """Duración real de cut.mp4 (cuadros / fps). Los proyectos preparados con versiones viejas de preparar.py traían en
+    cutmap.json una "dur" hasta 0,4 s más corta que el video y el reel se comía la última palabra."""
+    try:
+        r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_packets', '-show_entries',
+                            'stream=nb_read_packets,r_frame_rate', '-of', 'json', os.path.join(P, 'cut.mp4')],
+                           capture_output=True, text=True)
+        st = json.loads(r.stdout)['streams'][0]; a, b = st['r_frame_rate'].split('/')
+        return int(st['nb_read_packets']) * int(b) / int(a)
+    except Exception:
+        return 0.0
+
 def iniciar(proyecto, correcciones=None, semilla=1, colores=None):
     """Carga el proyecto preparado (cut.mp4, cutout.webm, words.json, face.json, cutmap.json). Llamar ANTES de `from motor import *`.
     correcciones : palabras que whisper oyó mal -> cómo se escriben, ej. {'cloud': 'Claude'}
@@ -663,7 +675,7 @@ def iniciar(proyecto, correcciones=None, semilla=1, colores=None):
     for need in ('cut.mp4', 'words.json', 'face.json', 'cutmap.json') + (() if solo_guion else ('cutout.webm',)):
         if not os.path.exists(os.path.join(P, need)):
             raise SystemExit(f'Falta {need} en {P}. Corre primero scripts/preparar.py y scripts/recortar.py (ver SKILL.md).')
-    CUT = json.load(open(os.path.join(P, 'cutmap.json'))); DUR = round(CUT['dur'], 3)
+    CUT = json.load(open(os.path.join(P, 'cutmap.json'))); DUR = round(max(CUT['dur'], _dur_cut(P)), 3)
     WD = cargar_palabras(P, correcciones); FACE = Cara(P); rnd = random.Random(semilla)
     _encuadrar()
     for l in (init, tw, parts, sfx, caps): l.clear()
